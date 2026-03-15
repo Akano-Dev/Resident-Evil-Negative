@@ -1,50 +1,6 @@
-/* ================================================================
-   DEAD ZONE — game.js  (Combat Overhaul Edition)
-   Three.js r128
-
-   ASSET STRUCTURE:
-     models/   zombie.glb  gun.glb
-     sounds/   gunshot.wav  zombie_growl.wav  player_hurt.wav  ambient_horror.mp3
-     textures/ ground.jpg   wall.jpg          ceiling.jpg      sky.jpg
-
-   HOW ASSETS ARE HANDLED:
-   • Every external asset is wrapped in a try/load pattern.
-   • If a file is missing the loader catches the error and the game
-     automatically falls back to the existing procedural mesh / Web
-     Audio synthesis — so the game ALWAYS runs even with no files.
-   • Drop real files into the folders above and they are used instead.
-
-   FIX / IMPROVEMENT LOG:
-   [FIX-1] Pointer lock — canvas 100vw×100vh; pointerlockerror caught;
-           requestPointerLock inside user-gesture; ESC → pause menu.
-   [FIX-2] Zombie GLB — pivot Group drives AI; inner mesh holds visual
-           orientation; bounding-box auto-scale; lookAt on pivot only.
-   [FIX-3] Audio latency — AudioContext created early (suspended);
-           all buffers decoded before first shot; zero first-shot delay.
-   [FIX-4] Zombie health / death — health clamped; dead flag first;
-           death animation on inner mesh; position.y guarded post-death.
-   [COMBAT-1] Bullet collision — world-space sphere test on pivot plus
-              vertical range guard; bullet removed on hit immediately;
-              hit confirmed with screen flash + kill-count increment.
-   [COMBAT-2] Blood effects — 20-particle burst with two passes:
-              fast outward spray + slow drip layer; particles carry
-              per-particle random colour within the dark-red range;
-              additive blending on fast particles for a gory glow.
-   [COMBAT-3] Zombie respawn — after death a 3-5 s timer selects a
-              random spawn point well away from the player; a new
-              zombie is placed, health reset, and the chase resumes;
-              zombiesKilled counter drives escalating difficulty.
-   [COMBAT-4] Kill counter & scoring — kills shown in HUD; difficulty
-              ramps every kill (speed +0.15, damage +1, health +10).
-   [FIX-5] Performance / fallback safety — all procedural systems kept;
-           particle cap (MAX_PARTICLES) prevents runaway allocation.
-   [FIX-6] Code quality — architecture unchanged; comments retained.
-   ================================================================ */
 'use strict';
 
-// ─────────────────────────────────────────────────────────────────
-//  ASSET MANIFEST
-// ─────────────────────────────────────────────────────────────────
+
 const ASSET_PATHS = {
   models: {
     zombie : 'models/zombie.glb',
@@ -64,28 +20,21 @@ const ASSET_PATHS = {
   },
 };
 
-// ─────────────────────────────────────────────────────────────────
-//  LOADED ASSET CACHE
-//  null = not loaded / fallback to procedural.
-// ─────────────────────────────────────────────────────────────────
+
 const Assets = {
   models:   { zombie: null, gun: null },
   buffers:  { gunshot: null, zombieGrowl: null, playerHurt: null, ambient: null },
   textures: { ground: null, wall: null, ceiling: null, sky: null },
 };
 
-// ─────────────────────────────────────────────────────────────────
-//  SETTINGS
-// ─────────────────────────────────────────────────────────────────
+
 const Settings = {
   sensitivity : 0.0014,
   volume      : 0.7,
   showFPS     : true,
 };
 
-// ─────────────────────────────────────────────────────────────────
-//  GAME CONSTANTS
-// ─────────────────────────────────────────────────────────────────
+
 const PLAYER_SPEED           = 8;
 const PLAYER_HEALTH_MAX      = 100;
 const ZOMBIE_HEALTH_MAX      = 200;
@@ -97,37 +46,30 @@ const JUMP_FORCE             = 10;
 const ZOMBIE_ATTACK_RANGE    = 2.0;
 const ZOMBIE_ATTACK_INTERVAL = 1.1;
 const SHOOT_COOLDOWN         = 0.28;
-const DAY_DURATION           = 60;   // seconds of daylight
-const NIGHT_DURATION         = 60;   // seconds of night
+const DAY_DURATION           = 60;   
+const NIGHT_DURATION         = 60;   
 const ZOMBIE_DAY             = { speed: 2.5, damage:  6 };
 const ZOMBIE_NIGHT           = { speed: 5.2, damage: 14 };
 
-// [COMBAT-1] Hit detection constants
-// ZOMBIE_HIT_RADIUS: horizontal sphere radius for bullet/zombie test.
-// ZOMBIE_HIT_HEIGHT: maximum y-distance from pivot for a valid hit
-//   (prevents bullets fired overhead from registering as hits).
+
 const ZOMBIE_HIT_RADIUS      = 1.2;
 const ZOMBIE_HIT_HEIGHT      = 2.5;
 
-// [COMBAT-3] Respawn configuration
-const ZOMBIE_RESPAWN_MIN     = 3.0;   // minimum seconds before respawn
-const ZOMBIE_RESPAWN_MAX     = 5.0;   // maximum seconds before respawn
-// Safe distance from player for a respawn point (world-units)
+
+const ZOMBIE_RESPAWN_MIN     = 3.0;   
+const ZOMBIE_RESPAWN_MAX     = 5.0;   
 const ZOMBIE_SPAWN_SAFE_DIST = 8.0;
-// Map boundary used for random spawn — must be ≤ room half-width (16)
+
 const ZOMBIE_SPAWN_BOUND     = 12.0;
 
-// [COMBAT-4] Difficulty ramp per kill
-const DIFFICULTY_SPEED_INC   = 0.15;  // added to base speed each kill
-const DIFFICULTY_DAMAGE_INC  = 1;     // added to base damage each kill
-const DIFFICULTY_HEALTH_INC  = 10;    // added to ZOMBIE_HEALTH_MAX each kill
 
-// [FIX-5] Max live particles to prevent garbage spikes
+const DIFFICULTY_SPEED_INC   = 0.15;  
+const DIFFICULTY_DAMAGE_INC  = 1;     
+const DIFFICULTY_HEALTH_INC  = 10;    
+
+
 const MAX_PARTICLES          = 200;
 
-// ─────────────────────────────────────────────────────────────────
-//  GAME STATE
-// ─────────────────────────────────────────────────────────────────
 let scene, camera, renderer, clock;
 let keys          = {};
 let yaw = 0, pitch = 0;
@@ -146,21 +88,21 @@ let shootTimer        = 0;
 let zombieAttackTimer = 0;
 let zombieAlive       = true;
 
-// [FIX-2] zombieGroup is the AI PIVOT; zombieMesh is the visual child.
+
 let zombieGroup, zombieMesh;
-// Eye references for day/night emissive glow.
+
 let zombieEyeL, zombieEyeR;
-// Canonical spawn position (updated each respawn).
+
 let zombiePos       = new THREE.Vector3(10, 0, 10);
 let zombieWalkTimer = 0;
 let growlTimer      = 0;
 
-// [COMBAT-3] Respawn state
-let zombieRespawnTimer  = 0;   // countdown seconds until respawn
-let zombiesKilled       = 0;   // total kills this game session
-let isRespawning        = false; // true while waiting to respawn
 
-// [COMBAT-4] Difficulty accumulator — grows with each kill
+let zombieRespawnTimer  = 0;   
+let zombiesKilled       = 0;   
+let isRespawning        = false; 
+
+
 let difficultyLevel = 0;
 
 let isDay      = true;
@@ -178,9 +120,7 @@ let gunBobTimer = 0;
 let fpsFrames = 0, fpsTime = 0;
 let shotsFired = 0, shotsHit = 0, damageTaken = 0, surviveTime = 0;
 
-// ─────────────────────────────────────────────────────────────────
-//  DOM REFS
-// ─────────────────────────────────────────────────────────────────
+
 const $ = id => document.getElementById(id);
 const loadingScreen = $('loading-screen');
 const loadBar       = $('load-bar');
@@ -208,29 +148,9 @@ const timeBar       = $('time-bar');
 const fpsCounter    = $('fps-counter');
 const phaseBanner   = $('phase-banner');
 
-// ═══════════════════════════════════════════════════════════════════
-//
-//  ██████╗  █████╗ ███████╗███████╗███████╗████████╗███████╗
-//  ██╔══██╗██╔══██╗██╔════╝██╔════╝██╔════╝╚══██╔══╝██╔════╝
-//  ███████║███████║███████╗███████╗█████╗     ██║   ███████╗
-//  ██╔══██║██╔══██║╚════██║╚════██║██╔══╝     ██║   ╚════██║
-//  ██║  ██║██║  ██║███████║███████║███████╗   ██║   ███████║
-//  ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝   ╚═╝   ╚══════╝
-//
-// ═══════════════════════════════════════════════════════════════════
 
-/**
- * Asset Manager
- * ─────────────
- * Loads all external assets in parallel, reports progress, and
- * stores results in the Assets cache.  Missing files are silently
- * caught — the game falls back to procedural generation for anything
- * that fails to load.
- */
 const AssetManager = (() => {
-  // ── Helpers ─────────────────────────────────────────────────────
-
-  /** Promise-based GLTF loader. Resolves with the gltf object or null. */
+ 
   function loadGLTF(path) {
     return new Promise(resolve => {
       if (typeof THREE.GLTFLoader === 'undefined') {
@@ -247,11 +167,7 @@ const AssetManager = (() => {
     });
   }
 
-  /**
-   * Promise-based AudioBuffer loader via fetch + ArrayBuffer storage.
-   * Raw bytes stored in Assets.buffers.*; decoded inside initAudio().
-   * [FIX-3] Each raw buffer is cloned before decoding.
-   */
+  
   function loadAudioBuffer(path) {
     return new Promise(resolve => {
       fetch(path)
@@ -264,10 +180,7 @@ const AssetManager = (() => {
     });
   }
 
-  /**
-   * Promise-based THREE.TextureLoader wrapper.
-   * Resolves with a configured THREE.Texture or null on error.
-   */
+  
   function loadTexture(path) {
     return new Promise(resolve => {
       const loader = new THREE.TextureLoader();
@@ -284,16 +197,9 @@ const AssetManager = (() => {
     });
   }
 
-  // ── Public API ───────────────────────────────────────────────────
-
-  /**
-   * loadAll(onProgress)
-   * Kicks off all asset loads in parallel.
-   * onProgress(pct:0-100, message:string) called as groups finish.
-   * Returns a Promise that resolves when all assets are done.
-   */
+  
   function loadAll(onProgress) {
-    const total = 10;  // models×2 + sounds×4 + textures×4
+    const total = 10;  
     let done = 0;
 
     function tick(msg) {
@@ -326,9 +232,7 @@ const AssetManager = (() => {
   return { loadAll };
 })();
 
-// ═══════════════════════════════════════════════════════════════════
-//  LOADING SEQUENCE
-// ═══════════════════════════════════════════════════════════════════
+
 
 function runBootstrap() {
   loadBar.style.width  = '5%';
@@ -355,9 +259,7 @@ function runBootstrap() {
 
 runBootstrap();
 
-// ═══════════════════════════════════════════════════════════════════
-//  MENU WIRING
-// ═══════════════════════════════════════════════════════════════════
+
 
 $('btn-start').addEventListener('click', () => {
   mainMenu.style.display = 'none';
@@ -440,9 +342,7 @@ $('fps-btn').addEventListener('click', function () {
   fpsCounter.style.display = Settings.showFPS ? 'block' : 'none';
 });
 
-// ═══════════════════════════════════════════════════════════════════
-//  [FIX-1]  POINTER LOCK + INPUT
-// ═══════════════════════════════════════════════════════════════════
+
 
 document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === renderer?.domElement;
@@ -519,30 +419,14 @@ function resumeGame() {
   renderer.domElement.requestPointerLock();
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//
-//   █████╗ ██╗   ██╗██████╗ ██╗ ██████╗
-//  ██╔══██╗██║   ██║██╔══██╗██║██╔═══██╗
-//  ███████║██║   ██║██║  ██║██║██║   ██║
-//  ██╔══██║██║   ██║██║  ██║██║██║   ██║
-//  ██║  ██║╚██████╔╝██████╔╝██║╚██████╔╝
-//  ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚═╝ ╚═════╝
-//
-// ═══════════════════════════════════════════════════════════════════
-/**
- * Hybrid Audio Engine
- * ───────────────────
- * [FIX-3] AudioContext created early (suspended) then resumed on first
- * user gesture.  ALL ArrayBuffers decoded eagerly so the gunshot buffer
- * is ready before the player can fire.
- */
+
 
 let audioCtx   = null;
 let masterGain = null;
 const DecodedBuffers  = { gunshot: null, zombieGrowl: null, playerHurt: null, ambient: null };
 let ambientSourceNode = null;
 
-// Create AudioContext immediately (browsers allow creation without gesture)
+
 (function _createAudioContext() {
   try {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -570,7 +454,7 @@ function initAudio() {
 
   _unlockAudio();
 
-  // Decode all raw buffers immediately — no latency on first shot
+  
   _decodeAllBuffers().then(() => {
     startAmbient();
   });
@@ -610,7 +494,7 @@ function _playBuffer(buf, gainVal = 1.0, loop = false) {
   } catch (e) { return null; }
 }
 
-// ── Ambient ──────────────────────────────────────────────────────
+
 
 function startAmbient() {
   if (ambientSourceNode) { try { ambientSourceNode.stop(); } catch(e){} }
@@ -640,7 +524,7 @@ function startAmbient() {
   }
 }
 
-// ── Gunshot ──────────────────────────────────────────────────────
+
 
 function playGunshot() {
   if (!audioCtx) return;
@@ -662,7 +546,7 @@ function playGunshot() {
   } catch (e) {}
 }
 
-// ── Zombie Growl ─────────────────────────────────────────────────
+
 
 function playZombieGrowl() {
   if (!audioCtx) return;
@@ -680,7 +564,7 @@ function playZombieGrowl() {
   } catch (e) {}
 }
 
-// ── Player Hurt ──────────────────────────────────────────────────
+
 
 function playPlayerHurt() {
   if (!audioCtx) return;
@@ -698,7 +582,7 @@ function playPlayerHurt() {
   } catch (e) {}
 }
 
-// ── Dry Click (empty gun) ────────────────────────────────────────
+
 
 function playDryClick() {
   if (!audioCtx) return;
@@ -715,7 +599,7 @@ function playDryClick() {
   } catch (e) {}
 }
 
-// ── Reload ───────────────────────────────────────────────────────
+
 
 function playReload() {
   if (!audioCtx) return;
@@ -734,21 +618,7 @@ function playReload() {
   } catch (e) {}
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//
-//  ████████╗███████╗██╗  ██╗████████╗██╗   ██╗██████╗ ███████╗███████╗
-//  ╚══██╔══╝██╔════╝╚██╗██╔╝╚══██╔══╝██║   ██║██╔══██╗██╔════╝██╔════╝
-//     ██║   █████╗   ╚███╔╝    ██║   ██║   ██║██████╔╝█████╗  ███████╗
-//     ██║   ██╔══╝   ██╔██╗    ██║   ██║   ██║██╔══██╗██╔══╝  ╚════██║
-//     ██║   ███████╗██╔╝ ██╗   ██║   ╚██████╔╝██║  ██║███████╗███████║
-//     ╚═╝   ╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝╚══════╝
-//
-// ═══════════════════════════════════════════════════════════════════
-/**
- * Texture Provider
- * ────────────────
- * Returns a configured THREE.Texture — loaded image or procedural.
- */
+
 
 function makeCanvas(size, fn) {
   const c = document.createElement('canvas');
@@ -759,7 +629,7 @@ function makeCanvas(size, fn) {
   return t;
 }
 
-// ── Procedural fallbacks ──────────────────────────────────────────
+
 
 function procFloor() {
   return makeCanvas(512, (ctx, s) => {
@@ -837,21 +707,19 @@ function procGround() {
   });
 }
 
-// ── Resolved texture getters (file or fallback) ───────────────────
+
 
 function getFloorTex()   { const t = Assets.textures.ground  || procFloor();   t.repeat.set(8, 8);   return t; }
 function getWallTex()    { const t = Assets.textures.wall    || procWall();    t.repeat.set(5, 2);   return t; }
 function getCeilingTex() { const t = Assets.textures.ceiling || procCeiling(); t.repeat.set(8, 8);   return t; }
 function getGroundTex()  { const t = Assets.textures.ground  || procGround();  t.repeat.set(12, 12); return t; }
 
-// ═══════════════════════════════════════════════════════════════════
-//  THREE.JS INIT
-// ═══════════════════════════════════════════════════════════════════
+
 
 function initThree() {
   const canvas = $('game-canvas');
 
-  // [FIX-1] Cover full viewport so every click can request pointer lock
+  
   canvas.style.position = 'fixed';
   canvas.style.top      = '0';
   canvas.style.left     = '0';
@@ -884,7 +752,7 @@ function initThree() {
   spawnZombie();
   buildGunModel();
 
-  // [FIX-1] Only request lock from a real click inside a user-gesture
+  
   canvas.addEventListener('click', () => {
     if (!gameOver && hud.style.display !== 'none' && !gamePaused) {
       canvas.requestPointerLock();
@@ -894,9 +762,7 @@ function initThree() {
   gameLoop();
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  START / RESET
-// ═══════════════════════════════════════════════════════════════════
+
 
 function startGame() {
   _unlockAudio();
@@ -919,12 +785,12 @@ function startGame() {
   cycleTimer        = 0;
   surviveTime = shotsFired = shotsHit = damageTaken = 0;
 
-  // [COMBAT-3] Reset respawn & kill tracking
+  
   zombiesKilled      = 0;
   isRespawning       = false;
   zombieRespawnTimer = 0;
 
-  // [COMBAT-4] Reset difficulty
+  
   difficultyLevel    = 0;
 
   blockInd.style.display = 'none';
@@ -932,7 +798,7 @@ function startGame() {
   camera.position.set(0, 1.65, 0);
   camera.rotation.set(0, 0, 0);
 
-  // Reset zombie to initial spawn
+  
   zombiePos.set(10, 0, 10);
   _resetZombieVisuals();
 
@@ -948,12 +814,7 @@ function startGame() {
   renderer.domElement.requestPointerLock();
 }
 
-/**
- * _resetZombieVisuals()
- * ─────────────────────
- * Repositions and re-erects the zombie group/mesh so it is ready to
- * chase again.  Called from startGame() and after each respawn.
- */
+
 function _resetZombieVisuals() {
   if (zombieGroup) {
     zombieGroup.position.copy(zombiePos);
@@ -961,7 +822,7 @@ function _resetZombieVisuals() {
     zombieGroup.rotation.set(0, 0, 0);
     zombieGroup.visible = true;
   }
-  // Re-erect inner mesh in case it was tipped during death animation
+  
   if (zombieMesh) {
     zombieMesh.rotation.set(0, 0, 0);
   }
@@ -973,9 +834,7 @@ function resetSceneState() {
   gamePaused = false;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  ENVIRONMENT
-// ═══════════════════════════════════════════════════════════════════
+
 
 function buildEnvironment() {
   const floorMat  = new THREE.MeshLambertMaterial({ map: getFloorTex()   });
@@ -986,26 +845,26 @@ function buildEnvironment() {
   const W = 32, D = 32, H = 5;
   const hw = W / 2, hd = D / 2;
 
-  // Outdoor ground
+  
   const outdoorGround = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), groundMat);
   outdoorGround.rotation.x   = -Math.PI / 2;
   outdoorGround.receiveShadow = true;
   scene.add(outdoorGround);
 
-  // Room floor
+  
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), floorMat);
   floor.rotation.x   = -Math.PI / 2;
   floor.position.y   = 0.01;
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // Ceiling
+  
   const ceil = new THREE.Mesh(new THREE.PlaneGeometry(W, D), ceilMat);
   ceil.rotation.x = Math.PI / 2;
   ceil.position.y = H;
   scene.add(ceil);
 
-  // Walls
+  
   function addWall(w, h, d, x, y, z) {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
     m.position.set(x, y, z);
@@ -1019,7 +878,7 @@ function buildEnvironment() {
   addWall(t, H, D, -hw,   H/2,   0);
   addWall(t, H, D,  hw,   H/2,   0);
 
-  // Props / debris
+  
   function addBox(w, h, d, x, z, col) {
     const m = new THREE.Mesh(
       new THREE.BoxGeometry(w, h, d),
@@ -1040,7 +899,7 @@ function buildEnvironment() {
   addBox(0.5, 1.1, 0.5,   5,   -3,   0x191510);
   addBox(3.0, 0.35,0.5,  -3,  -10,   0x111110);
 
-  // Blood decals on floor
+  
   for (let i = 0; i < 8; i++) {
     const s = 0.5 + Math.random() * 1.8;
     const decal = new THREE.Mesh(
@@ -1053,9 +912,7 @@ function buildEnvironment() {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  LIGHTING
-// ═══════════════════════════════════════════════════════════════════
+
 
 function buildLights() {
   ambLight = new THREE.AmbientLight(0xffeedd, 1.2);
@@ -1107,9 +964,7 @@ function buildLights() {
   scene.add(camera);
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  SKY
-// ═══════════════════════════════════════════════════════════════════
+
 
 function buildSky() {
   const skyGeo = new THREE.SphereGeometry(150, 16, 8);
@@ -1129,9 +984,7 @@ function buildSky() {
   scene.add(skyMesh);
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  DAY / NIGHT
-// ═══════════════════════════════════════════════════════════════════
+
 
 const DAY_SKY      = new THREE.Color(0x87ceeb);
 const SUNSET_SKY   = new THREE.Color(0xff6020);
@@ -1142,13 +995,13 @@ const DAY_AMB_COL  = new THREE.Color(0xffeedd);
 const NIGHT_AMB_COL= new THREE.Color(0x050515);
 
 function setDayEnvironment(t) {
-  // t = 1 → full day, 0 → full night
+  
   const skyCol = t > 0.5
     ? DAY_SKY.clone().lerp(SUNSET_SKY, (1 - t) * 2)
     : SUNSET_SKY.clone().lerp(NIGHT_SKY, (0.5 - t) * 2);
   const fogCol = DAY_FOG.clone().lerp(NIGHT_FOG, 1 - t);
 
-  // Only tint if using plain-colour sky (don't overwrite loaded texture)
+  
   if (skyMesh && !skyMesh.material.map) {
     skyMesh.material.color.copy(skyCol);
   }
@@ -1194,27 +1047,7 @@ function setDayEnvironment(t) {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//
-//  ███╗   ███╗ ██████╗ ██████╗ ███████╗██╗      ███████╗
-//  ████╗ ████║██╔═══██╗██╔══██╗██╔════╝██║      ██╔════╝
-//  ██╔████╔██║██║   ██║██║  ██║█████╗  ██║      ███████╗
-//  ██║╚██╔╝██║██║   ██║██║  ██║██╔══╝  ██║      ╚════██║
-//  ██║ ╚═╝ ██║╚██████╔╝██████╔╝███████╗███████╗ ███████║
-//  ╚═╝     ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝╚══════╝ ╚══════╝
-//
-// ═══════════════════════════════════════════════════════════════════
 
-/**
- * spawnZombie()
- * ─────────────
- * [FIX-2] Two-layer structure:
- *   zombieGroup  (PIVOT — AI drives this)
- *     └─ zombieMesh  (GLB scene or procedural mesh)
- *
- * AI logic (position, lookAt, walk-bob) operates ONLY on zombieGroup.
- * The inner zombieMesh carries the visual orientation correction.
- */
 function spawnZombie() {
   if (Assets.models.zombie) {
     _spawnZombieGLB(Assets.models.zombie);
@@ -1223,7 +1056,7 @@ function spawnZombie() {
   }
 }
 
-// ── GLB path ─────────────────────────────────────────────────────
+
 
 function _spawnZombieGLB(gltf) {
   console.log('[Zombie] Using loaded GLB model');
@@ -1234,7 +1067,7 @@ function _spawnZombieGLB(gltf) {
 
   zombieMesh = gltf.scene.clone(true);
 
-  // Auto-scale via bounding box (target ~2 world-units tall)
+  
   const TARGET_HEIGHT = 2.0;
   const bbox = new THREE.Box3().setFromObject(zombieMesh);
   const modelHeight = bbox.max.y - bbox.min.y;
@@ -1242,11 +1075,11 @@ function _spawnZombieGLB(gltf) {
   zombieMesh.scale.setScalar(autoScale);
   console.log(`[Zombie] Auto-scale: ${autoScale.toFixed(4)} (model height was ${modelHeight.toFixed(3)})`);
 
-  // Shift feet to y=0 on the pivot
+  
   const bboxScaled = new THREE.Box3().setFromObject(zombieMesh);
   zombieMesh.position.y = -bboxScaled.min.y;
 
-  // [FIX-2] Flip 180° on Y so the model faces the direction lookAt points
+  
   zombieMesh.rotation.y = Math.PI;
 
   zombieMesh.traverse(child => {
@@ -1258,7 +1091,7 @@ function _spawnZombieGLB(gltf) {
 
   zombieGroup.add(zombieMesh);
 
-  // Invisible eye markers for night-glow references
+  
   const eyeGeo  = new THREE.SphereGeometry(0.001, 4, 4);
   const eyeMatL = new THREE.MeshStandardMaterial({
     color: 0x550000, emissive: new THREE.Color(0x220000), visible: false,
@@ -1269,7 +1102,7 @@ function _spawnZombieGLB(gltf) {
   zombieGroup.add(zombieEyeL, zombieEyeR);
 }
 
-// ── Procedural fallback path ──────────────────────────────────────
+
 
 function _spawnZombieProc() {
   console.log('[Zombie] Using procedural fallback model');
@@ -1329,16 +1162,7 @@ function _spawnZombieProc() {
   bs.position.set(0.1, 1.48, 0.22); zombieMesh.add(bs);
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//
-//   ██████╗ ██╗   ██╗███╗   ██╗
-//  ██╔════╝ ██║   ██║████╗  ██║
-//  ██║  ███╗██║   ██║██╔██╗ ██║
-//  ██║   ██║██║   ██║██║╚██╗██║
-//  ╚██████╔╝╚██████╔╝██║ ╚████║
-//   ╚═════╝  ╚═════╝ ╚═╝  ╚═══╝
-//
-// ═══════════════════════════════════════════════════════════════════
+
 
 function buildGunModel() {
   if (Assets.models.gun) {
@@ -1426,7 +1250,7 @@ function _buildGunProc() {
   camera.add(gunGroup);
 }
 
-// ── Gun animation (recoil + sway) ────────────────────────────────
+
 
 function animateGun(dt) {
   gunBobTimer += dt;
@@ -1448,9 +1272,7 @@ function animateGun(dt) {
   gunGroup.position.x =  0.2  + Math.cos(gunBobTimer * freq * 0.5) * sway * 0.5;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  SHOOTING
-// ═══════════════════════════════════════════════════════════════════
+
 
 function tryShoot() {
   if (!canShoot) return;
@@ -1505,26 +1327,7 @@ function doReload() {
   }, 1200);
 }
 
-// ─────────────────────────────────────────────────────────────────
-//  [COMBAT-1] BULLET UPDATE & HIT DETECTION
-//  ────────────────────────────────────────────────────────────────
-//  Hit detection uses a two-stage test:
-//    1. Horizontal distance from bullet to zombieGroup.position on
-//       the XZ plane must be < ZOMBIE_HIT_RADIUS.  Using just the
-//       pivot (not a mesh bounding box) gives reliable detection for
-//       both GLB and procedural models regardless of their geometry.
-//    2. Vertical distance (bullet.pos.y - zombieGroup.position.y)
-//       must be < ZOMBIE_HIT_HEIGHT.  This prevents bullets fired
-//       high overhead from registering as hits on a ground zombie.
-//
-//  On a confirmed hit:
-//    • The bullet is removed from the array immediately (b.alive=false).
-//    • zombieHealth is reduced, clamped to 0.
-//    • A blood-particle burst is spawned at the hit position.
-//    • The zombie health bar is updated.
-//    • A growl is played.
-//    • If health == 0, killZombie() is called.
-// ─────────────────────────────────────────────────────────────────
+
 
 function updateBullets(dt) {
   for (let i = bullets.length - 1; i >= 0; i--) {
@@ -1537,47 +1340,47 @@ function updateBullets(dt) {
       continue;
     }
 
-    // Advance bullet position
+    
     b.pos.addScaledVector(b.dir, BULLET_SPEED * dt);
     b.mesh.position.copy(b.pos);
     b.dist += BULLET_SPEED * dt;
 
-    // Max range cull
+    
     if (b.dist > 80) {
       b.alive = false;
       continue;
     }
 
-    // ── [COMBAT-1] Hit test (only while zombie is alive & not respawning)
+    
     if (zombieAlive && !isRespawning) {
       const zp = zombieGroup.position;
 
-      // XZ plane distance (avoids false hits from bullets flying over the zombie)
+      
       const dx   = b.pos.x - zp.x;
       const dz   = b.pos.z - zp.z;
       const hDist = Math.sqrt(dx * dx + dz * dz);
 
-      // Vertical distance from bullet to zombie's base
+      
       const vDist = Math.abs(b.pos.y - zp.y);
 
       if (hDist < ZOMBIE_HIT_RADIUS && vDist < ZOMBIE_HIT_HEIGHT) {
-        // ── Confirmed hit ──────────────────────────────────────────
+       
         b.alive = false;
         shotsHit++;
 
-        // [COMBAT-2] Spawn enhanced blood particles at the exact hit point
+        
         spawnBloodParticles(b.pos.clone());
 
-        // Small screen flash to confirm the hit for the player
+       
         triggerHitConfirmFlash();
 
-        // Reduce health, clamped to 0
+        
         zombieHealth = Math.max(0, zombieHealth - BULLET_DAMAGE);
 
-        // Update HUD health bar
+        
         updateZombieBar();
 
-        // Zombie reacts with a growl
+        
         playZombieGrowl();
 
         console.log(`[Combat] Hit! Zombie health: ${zombieHealth}`);
@@ -1590,31 +1393,20 @@ function updateBullets(dt) {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  [COMBAT-2]  BLOOD PARTICLE SYSTEM
-//  ─────────────────────────────────────────────────────────────────
-//  Improved over the original 10-particle burst with:
-//  • 20 total particles split into two layers:
-//      Layer A (fast spray) — 12 particles, high initial velocity,
-//        short life, additive blending for a bright gory spatter.
-//      Layer B (drip layer) — 8 particles, slower, longer life,
-//        fall more steeply under gravity to simulate dripping blood.
-//  • Per-particle random colour in the 0x550000–0xcc0000 range.
-//  • Particle cap (MAX_PARTICLES) ensures no runaway allocation.
-// ═══════════════════════════════════════════════════════════════════
+
 
 function spawnBloodParticles(pos) {
-  // [FIX-5] Respect the global particle cap
+  
   if (particles.length >= MAX_PARTICLES) return;
 
   const available = MAX_PARTICLES - particles.length;
 
-  // ── Layer A: fast outward spray ───────────────────────────────
+  
   const sprayCount = Math.min(12, available);
   for (let i = 0; i < sprayCount; i++) {
-    // Random dark-red hue for variety
+    
     const r  = 0x55 + Math.floor(Math.random() * 0x77);
-    const col = (r << 16);   // green/blue stay 0 — stays in red range
+    const col = (r << 16);   
 
     const m = new THREE.Mesh(
       new THREE.SphereGeometry(0.02 + Math.random() * 0.04, 4, 4),
@@ -1622,7 +1414,7 @@ function spawnBloodParticles(pos) {
         color:       col,
         transparent: true,
         opacity:     1,
-        blending:    THREE.AdditiveBlending,   // bright pop at impact
+        blending:    THREE.AdditiveBlending,   
         depthWrite:  false,
       })
     );
@@ -1640,12 +1432,12 @@ function spawnBloodParticles(pos) {
                   Math.sin(angle) * speed
                 ),
       life:     0.25 + Math.random() * 0.25,
-      maxLife:  0.25 + Math.random() * 0.25,  // stored for opacity curve
-      gravMult: 0.5,    // lighter gravity — spray stays airborne
+      maxLife:  0.25 + Math.random() * 0.25,  
+      gravMult: 0.5,    
     });
   }
 
-  // ── Layer B: slow drip / fall ─────────────────────────────────
+  
   const dropCount = Math.min(8, MAX_PARTICLES - particles.length);
   for (let i = 0; i < dropCount; i++) {
     const r   = 0x33 + Math.floor(Math.random() * 0x44);
@@ -1679,11 +1471,7 @@ function spawnBloodParticles(pos) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────
-//  Particle update — handles both blood particle layers.
-//  [FIX-5] Particles are removed from the END of the array using a
-//  reverse loop so splicing doesn't corrupt iteration.
-// ─────────────────────────────────────────────────────────────────
+
 
 function updateParticles(dt) {
   for (let i = particles.length - 1; i >= 0; i--) {
@@ -1692,31 +1480,29 @@ function updateParticles(dt) {
 
     if (p.life <= 0) {
       scene.remove(p.mesh);
-      // Dispose geometry and material to free GPU memory
+      
       p.mesh.geometry.dispose();
       p.mesh.material.dispose();
       particles.splice(i, 1);
       continue;
     }
 
-    // Gravity (per-particle multiplier for spray vs drip feel)
+    
     p.vel.y += GRAVITY * dt * (p.gravMult || 0.35);
 
-    // Move
+    
     p.mesh.position.addScaledVector(p.vel, dt);
 
-    // Fade out smoothly using remaining life fraction
+    
     const lifeFraction = p.life / (p.maxLife || 0.5);
     p.mesh.material.opacity = Math.max(0, lifeFraction);
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  ZOMBIE AI
-// ═══════════════════════════════════════════════════════════════════
+
 
 function updateZombie(dt) {
-  // [COMBAT-3] Handle respawn countdown when zombie is dead
+  
   if (!zombieAlive) {
     if (isRespawning) {
       zombieRespawnTimer -= dt;
@@ -1730,7 +1516,7 @@ function updateZombie(dt) {
   zombieWalkTimer += dt;
   growlTimer      += dt;
 
-  // [FIX-2] All positional reads/writes go through zombieGroup (pivot)
+  
   const zp   = zombieGroup.position;
   const pp   = camera.position;
 
@@ -1738,7 +1524,7 @@ function updateZombie(dt) {
   const dist = dir.length();
   dir.normalize();
 
-  // Speed scaling with day/night AND difficulty ramp
+  
   const nightT      = isDay ? 0 : Math.min(1, cycleTimer / NIGHT_DURATION);
   const baseSpeed   = ZOMBIE_DAY.speed + (ZOMBIE_NIGHT.speed - ZOMBIE_DAY.speed) * nightT;
   const spd         = baseSpeed + difficultyLevel * DIFFICULTY_SPEED_INC;
@@ -1748,23 +1534,23 @@ function updateZombie(dt) {
     zp.z += dir.z * spd * dt;
   }
 
-  // Keep pivot Y at 0 during normal movement
+  
   zp.y = 0;
 
-  // [FIX-2] lookAt on PIVOT — inner mesh has 180° Y baked in
+  
   zombieGroup.lookAt(new THREE.Vector3(pp.x, 0, pp.z));
 
-  // Walk bob
+ 
   const walkFreq = 4 + nightT * 3;
   zombieGroup.position.y = Math.abs(Math.sin(zombieWalkTimer * walkFreq)) * 0.07;
 
-  // Random growl when player is in range
+  
   if (growlTimer > 3.5 + Math.random() * 4 && dist < 20) {
     growlTimer = 0;
     playZombieGrowl();
   }
 
-  // Attack
+  
   zombieAttackTimer += dt;
   if (dist < ZOMBIE_ATTACK_RANGE && zombieAttackTimer >= ZOMBIE_ATTACK_INTERVAL) {
     zombieAttackTimer = 0;
@@ -1783,41 +1569,33 @@ function attackPlayer(dmg) {
   if (playerHealth <= 0) endGame(false);
 }
 
-// ─────────────────────────────────────────────────────────────────
-//  [COMBAT-1] / [FIX-4]  killZombie
-//  ─────────────────────────────────────────────────────────────────
-//  • Sets zombieAlive = false FIRST (stops AI + bullet hit tests).
-//  • Tips the inner zombieMesh for the death pose visual.
-//  • Schedules the respawn timer.
-//  • Increments kill counter and difficulty.
-//  • Does NOT call endGame() — respawn keeps the game going.
-// ─────────────────────────────────────────────────────────────────
+
 
 function killZombie() {
-  // Stop AI and bullet collision immediately
+  
   zombieAlive = false;
 
-  // Visual death tip on the inner mesh (not the pivot)
+  
   if (zombieMesh) {
     zombieMesh.rotation.z = Math.PI / 2;
   }
-  // Lift pivot slightly so tipped model doesn't clip floor
+  
   if (zombieGroup) {
     zombieGroup.position.y = 0.3;
   }
 
-  // Update kill count and difficulty
+ 
   zombiesKilled++;
   difficultyLevel++;
   _updateKillCounter();
 
-  // Show a kill confirmation message
+  
   showMsg(`☠ KILL #${zombiesKilled}  — Difficulty +1`, 2.5);
 
-  // [COMBAT-3] Spawn a big death blood burst at the zombie's position
+  
   spawnDeathBloodBurst(zombieGroup.position.clone());
 
-  // [COMBAT-3] Schedule respawn after 3–5 seconds
+  
   const delay = ZOMBIE_RESPAWN_MIN + Math.random() * (ZOMBIE_RESPAWN_MAX - ZOMBIE_RESPAWN_MIN);
   zombieRespawnTimer = delay;
   isRespawning       = true;
@@ -1825,36 +1603,30 @@ function killZombie() {
   console.log(`[Zombie] Killed (kill #${zombiesKilled}). Respawning in ${delay.toFixed(1)}s`);
 }
 
-// ─────────────────────────────────────────────────────────────────
-//  [COMBAT-3]  RESPAWN LOGIC
-//  ─────────────────────────────────────────────────────────────────
-//  Picks a random position within ZOMBIE_SPAWN_BOUND on the XZ plane
-//  that is at least ZOMBIE_SPAWN_SAFE_DIST away from the player, then
-//  resets all zombie state and restarts the chase.
-// ─────────────────────────────────────────────────────────────────
+
 
 function _doRespawnZombie() {
   isRespawning = false;
 
-  // Pick a safe spawn point
+  
   const spawnPos = _pickZombieSpawnPoint();
   zombiePos.copy(spawnPos);
 
-  // Reset health — scales with difficulty
+  
   zombieHealth = ZOMBIE_HEALTH_MAX + difficultyLevel * DIFFICULTY_HEALTH_INC;
 
-  // Reset timers
+  
   zombieWalkTimer   = 0;
   growlTimer        = 0;
   zombieAttackTimer = 0;
 
-  // Re-erect and reposition the existing zombie group
+  
   _resetZombieVisuals();
 
-  // Mark alive again
+  
   zombieAlive = true;
 
-  // Update HUD bar to full for new zombie
+  
   updateZombieBar();
 
   showMsg('NEW ZOMBIE INCOMING!', 2.5);
@@ -1863,14 +1635,7 @@ function _doRespawnZombie() {
   console.log(`[Zombie] Respawned at (${spawnPos.x.toFixed(1)}, ${spawnPos.z.toFixed(1)}). Health: ${zombieHealth}`);
 }
 
-/**
- * _pickZombieSpawnPoint()
- * ────────────────────────
- * Returns a THREE.Vector3 on the ground plane that is:
- *   • Inside [-ZOMBIE_SPAWN_BOUND, +ZOMBIE_SPAWN_BOUND] on X and Z
- *   • At least ZOMBIE_SPAWN_SAFE_DIST away from the player
- * Falls back to a default position if 20 random attempts all fail.
- */
+
 function _pickZombieSpawnPoint() {
   const pp = camera.position;
 
@@ -1885,7 +1650,7 @@ function _pickZombieSpawnPoint() {
     }
   }
 
-  // Fallback: spawn directly opposite the player at max bound
+  
   const angle = Math.atan2(pp.z, pp.x) + Math.PI;
   return new THREE.Vector3(
     Math.cos(angle) * ZOMBIE_SPAWN_BOUND * 0.9,
@@ -1894,12 +1659,7 @@ function _pickZombieSpawnPoint() {
   );
 }
 
-/**
- * spawnDeathBloodBurst()
- * ───────────────────────
- * [COMBAT-3] Large burst of blood particles when a zombie dies —
- * more particles and wider spread than a regular hit burst.
- */
+
 function spawnDeathBloodBurst(pos) {
   if (particles.length >= MAX_PARTICLES) return;
 
@@ -1918,7 +1678,7 @@ function spawnDeathBloodBurst(pos) {
         depthWrite:  false,
       })
     );
-    // Raise spawn point to roughly torso height
+    
     const spawnPos = pos.clone();
     spawnPos.y += 0.8 + Math.random() * 0.8;
     m.position.copy(spawnPos);
@@ -1941,9 +1701,7 @@ function spawnDeathBloodBurst(pos) {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  PLAYER MOVEMENT
-// ═══════════════════════════════════════════════════════════════════
+
 
 function updatePlayer(dt) {
   if (gamePaused) return;
@@ -1992,9 +1750,7 @@ function updatePlayer(dt) {
   });
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  DAY / NIGHT CYCLE
-// ═══════════════════════════════════════════════════════════════════
+
 
 function updateDayNight(dt) {
   if (!gameActive || gamePaused) return;
@@ -2023,9 +1779,7 @@ function showPhaseBanner(text) {
   phaseBannerTO = setTimeout(() => { phaseBanner.style.opacity = '0'; }, 3500);
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  FLICKER
-// ═══════════════════════════════════════════════════════════════════
+
 
 function updateFlicker(dt) {
   flickerLights.forEach(f => {
@@ -2038,9 +1792,7 @@ function updateFlicker(dt) {
   });
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  HUD
-// ═══════════════════════════════════════════════════════════════════
+
 
 function updateHUD() {
   const hp = (playerHealth / PLAYER_HEALTH_MAX) * 100;
@@ -2055,22 +1807,16 @@ function updateHUD() {
 }
 
 function updateZombieBar() {
-  // Health can exceed ZOMBIE_HEALTH_MAX due to difficulty scaling, so
-  // track the current maximum (ZOMBIE_HEALTH_MAX + kills × inc)
+  
   const maxHp = ZOMBIE_HEALTH_MAX + difficultyLevel * DIFFICULTY_HEALTH_INC;
   zombieBar.style.width = Math.max(0, (zombieHealth / maxHp) * 100) + '%';
 }
 
-/**
- * [COMBAT-4] _updateKillCounter
- * Writes the zombiesKilled count into the DOM.  If the element
- * doesn't exist in the HTML it creates it on first call.
- */
+
 function _updateKillCounter() {
   let el = $('kill-counter');
   if (!el) {
-    // Create the kill-counter element dynamically so the existing
-    // HTML doesn't need to be changed.
+    
     el = document.createElement('div');
     el.id = 'kill-counter';
     Object.assign(el.style, {
@@ -2101,11 +1847,7 @@ function triggerHitFlash() {
   setTimeout(() => { hitFlash.style.opacity = '0'; }, 130);
 }
 
-/**
- * [COMBAT-1] triggerHitConfirmFlash
- * A brief, subtle white flash that confirms a bullet hit on the zombie.
- * Distinct from triggerHitFlash() which shows the player was hurt.
- */
+
 function triggerHitConfirmFlash() {
   shootFlash.style.opacity = '0.15';
   setTimeout(() => { shootFlash.style.opacity = '0'; }, 40);
@@ -2114,17 +1856,13 @@ function triggerHitConfirmFlash() {
 function triggerShootFlash()  { shootFlash.style.opacity  = '1'; setTimeout(() => { shootFlash.style.opacity  = '0'; },  55); }
 function triggerMuzzleFlash() { muzzleFlash.style.opacity = '1'; setTimeout(() => { muzzleFlash.style.opacity = '0'; },  55); }
 
-// ═══════════════════════════════════════════════════════════════════
-//  SHOOT COOLDOWN
-// ═══════════════════════════════════════════════════════════════════
+
 
 function updateShootCooldown(dt) {
   if (!canShoot) { shootTimer -= dt; if (shootTimer <= 0) canShoot = true; }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  FPS COUNTER
-// ═══════════════════════════════════════════════════════════════════
+
 
 function updateFPS(dt) {
   fpsFrames++;
@@ -2137,9 +1875,7 @@ function updateFPS(dt) {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  GAME END
-// ═══════════════════════════════════════════════════════════════════
+
 
 function endGame(won) {
   gameActive = false;
@@ -2170,9 +1906,7 @@ function endGame(won) {
   }, won ? 2200 : 1000);
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  MAIN LOOP
-// ═══════════════════════════════════════════════════════════════════
+
 
 function gameLoop() {
   requestAnimationFrame(gameLoop);
@@ -2186,9 +1920,9 @@ function gameLoop() {
   }
 
   updatePlayer(dt);
-  updateZombie(dt);        // also handles respawn countdown
-  updateBullets(dt);       // [COMBAT-1] improved hit detection
-  updateParticles(dt);     // [COMBAT-2] improved blood effects
+  updateZombie(dt);        
+  updateBullets(dt);       
+  updateParticles(dt);     
   updateShootCooldown(dt);
   updateFlicker(dt);
   updateDayNight(dt);
