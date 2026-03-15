@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DEAD ZONE — Survival Horror</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+
+<!-- ═══════════════════════════════
+     LOADING SCREEN
+═══════════════════════════════ -->
+<div id="loading-screen">
+  <div class="load-inner">
+    <div class="skull-icon">☠</div>
+    <h1 class="game-title">DEAD<span>ZONE</span></h1>
+    <p class="game-sub">SURVIVAL HORROR</p>
+    <div class="load-bar-wrap"><div class="load-bar" id="load-bar"></div></div>
+    <p class="load-text" id="load-text">Initializing…</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════
+     MAIN MENU
+═══════════════════════════════ -->
+<div id="main-menu" style="display:none">
+  <div class="menu-bg-overlay"></div>
+  <div class="menu-panel">
+    <div class="menu-skull">☠</div>
+    <h1 class="game-title">DEAD<span>ZONE</span></h1>
+    <p class="game-sub">SURVIVAL HORROR</p>
+    <div class="menu-buttons">
+      <button class="menu-btn primary" id="btn-start">▶ &nbsp;START GAME</button>
+      <button class="menu-btn"         id="btn-settings">⚙ &nbsp;SETTINGS</button>
+    </div>
+    <div class="menu-keybinds">
+      <div class="kb-row"><span>Move</span><kbd>W A S D</kbd></div>
+      <div class="kb-row"><span>Aim</span><kbd>Mouse</kbd></div>
+      <div class="kb-row"><span>Shoot</span><kbd>LMB</kbd></div>
+      <div class="kb-row"><span>Block</span><kbd>RMB</kbd></div>
+      <div class="kb-row"><span>Jump</span><kbd>Space</kbd></div>
+      <div class="kb-row"><span>Reload</span><kbd>R</kbd></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════
+     SETTINGS PANEL
+═══════════════════════════════ -->
+<div id="settings-panel" style="display:none">
+  <div class="settings-box">
+    <h2 class="settings-title">⚙ SETTINGS</h2>
+
+    <div class="setting-row">
+      <label>Mouse Sensitivity</label>
+      <div class="slider-wrap">
+        <input type="range" id="sens-slider" min="1" max="20" value="8" step="1"/>
+        <span id="sens-val">8</span>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <label>Sound Volume</label>
+      <div class="slider-wrap">
+        <input type="range" id="vol-slider" min="0" max="100" value="70" step="5"/>
+        <span id="vol-val">70%</span>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <label>Fullscreen</label>
+      <button class="toggle-btn" id="fullscreen-btn">Enable</button>
+    </div>
+
+    <div class="setting-row">
+      <label>Show FPS Counter</label>
+      <button class="toggle-btn toggled" id="fps-btn">ON</button>
+    </div>
+
+    <div class="settings-keybinds">
+      <h3>KEYBINDINGS</h3>
+      <div class="kb-grid">
+        <div><kbd>W A S D</kbd><span>Move</span></div>
+        <div><kbd>Space</kbd><span>Jump</span></div>
+        <div><kbd>LMB</kbd><span>Shoot</span></div>
+        <div><kbd>RMB</kbd><span>Block</span></div>
+        <div><kbd>R</kbd><span>Reload</span></div>
+        <div><kbd>Esc</kbd><span>Pause</span></div>
+      </div>
+    </div>
+
+    <button class="menu-btn primary" id="btn-settings-back">← BACK</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════
+     PAUSE MENU
+═══════════════════════════════ -->
+<div id="pause-menu" style="display:none">
+  <div class="menu-panel pause-panel">
+    <h2 class="pause-title">⏸ PAUSED</h2>
+    <button class="menu-btn primary" id="btn-resume">▶ RESUME</button>
+    <button class="menu-btn"         id="btn-pause-settings">⚙ SETTINGS</button>
+    <button class="menu-btn danger"  id="btn-quit">✕ QUIT TO MENU</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════
+     END SCREEN
+═══════════════════════════════ -->
+<div id="end-screen" style="display:none">
+  <div class="end-panel">
+    <div id="end-icon"></div>
+    <h2 id="end-title"></h2>
+    <p  id="end-msg"></p>
+    <div id="end-stats" class="end-stats"></div>
+    <button class="menu-btn primary" id="btn-restart">↺ PLAY AGAIN</button>
+    <button class="menu-btn"         id="btn-end-menu">⌂ MAIN MENU</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════
+     HUD
+═══════════════════════════════ -->
+<div id="hud" style="display:none">
+
+  <!-- Crosshair -->
+  <div id="crosshair">
+    <div class="ch-t"></div><div class="ch-b"></div>
+    <div class="ch-l"></div><div class="ch-r"></div>
+    <div class="ch-dot"></div>
+  </div>
+
+  <!-- Top-centre: time of day -->
+  <div id="time-hud">
+    <span id="time-icon">☀</span>
+    <span id="time-label">DAYLIGHT</span>
+    <div id="time-bar-bg"><div id="time-bar"></div></div>
+  </div>
+
+  <!-- Bottom-left: health -->
+  <div id="health-panel">
+    <div class="hud-label">❤ HEALTH</div>
+    <div class="bar-outer"><div id="health-bar"></div></div>
+    <span id="health-val">100</span>
+  </div>
+
+  <!-- Bottom-right: ammo -->
+  <div id="ammo-panel">
+    <div class="hud-label">AMMO</div>
+    <div id="ammo-display">
+      <span id="ammo-cur">12</span><span class="ammo-slash">/</span><span id="ammo-max">12</span>
+    </div>
+    <div id="reload-hint" style="display:none">[ R ] RELOAD</div>
+  </div>
+
+  <!-- Bottom-centre: enemy health -->
+  <div id="enemy-panel">
+    <div class="hud-label">☠ ZOMBIE</div>
+    <div class="bar-outer enemy-bar-outer"><div id="zombie-bar"></div></div>
+  </div>
+
+  <!-- Top-right: FPS -->
+  <div id="fps-counter">60 FPS</div>
+
+  <!-- Damage & shoot overlays -->
+  <div id="hit-flash"></div>
+  <div id="shoot-flash"></div>
+  <div id="night-vignette"></div>
+
+  <!-- Centre messages -->
+  <div id="game-msg"></div>
+  <div id="block-ind" style="display:none">🛡 BLOCKING</div>
+
+  <!-- Muzzle flash -->
+  <div id="muzzle-flash"></div>
+
+  <!-- Phase transition banner -->
+  <div id="phase-banner"></div>
+</div>
+
+<!-- ═══════════════════════════════
+     CANVAS + SCRIPTS
+═══════════════════════════════ -->
+<canvas id="game-canvas"></canvas>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- GLTFLoader: required for loading .glb / .gltf 3D models -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128/examples/js/loaders/GLTFLoader.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
